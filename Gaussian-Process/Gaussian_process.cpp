@@ -7,7 +7,7 @@
 using namespace std;
 namespace plt = matplotlibcpp;
 
-string CSVfname = "VANNES-SENE_3879_decadal_filtre_19981001_20260921.csv";
+string CSVfname = "data/VANNES-SENE_3879_decadal_filtre_19981001_20260921.csv";
 
 vector<vector<string>> readCSV(const string& filename);
 vector<int> getDate(const vector<vector<string>>& data);
@@ -38,7 +38,7 @@ int main(){
     plt::legend();
 
     // save figure
-    const char* filename = "./GP_temperature.png";
+    const char* filename = "figures/GP_temperature.png";
     cout << "Saving result to " << filename << std::endl;;
     plt::save(filename);
 	return 0;
