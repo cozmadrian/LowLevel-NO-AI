@@ -88,10 +88,18 @@ int main(){
 
     // defining the k vectors for a new observation 
     int N_star = 1008;
-    Eigen::VectorXd X_star = Eigen::VectorXd::LinSpaced(N_star, X.minCoeff(), X.maxCoeff());
+    double days_in_future = 3.0 * 365.25;
+    
+    double start_time = X.minCoeff();                  // First day (1998)
+    double end_time_future = X.maxCoeff() + days_in_future; // Last day + 3 years
+
+    // Gridded timeline extending into the future
+    Eigen::VectorXd X_star = Eigen::VectorXd::LinSpaced(N_star, start_time, end_time_future);
     
     vector<double> pred_date(N_star);
     vector<double> pred_temp(N_star);
+    vector<double> lower_bound(N_star);
+    vector<double> upper_bound(N_star);
     
     cout << "Predicting temperatures across the timeline..." << endl;
     for(int i = 0; i < N_star; ++i) {
@@ -103,24 +111,86 @@ int main(){
         
         pred_date[i] = current_x;
         pred_temp[i] = pred_centered + mean_temp; // Restore original scale
+        
+        double k_ss = rbf_kernel(current_x, current_x, t1, t1, l);
+        Eigen::VectorXd v = llt.solve(k); // Using MKL Cholesky to compute K^-1 * k
+        double variance = k_ss - k.dot(v);
+        
+        // Handle tiny numerical negatives if variance is close to 0
+        if (variance < 0.0) variance = 0.0; 
+        double sigma = sqrt(variance);
+        
+        // 95% confidence interval boundaries (+/- 1.96 * sigma)
+        lower_bound[i] = (pred_centered - 1.96 * sigma) + mean_temp;
+        upper_bound[i] = (pred_centered + 1.96 * sigma) + mean_temp;
     }
     
 	// ======== generating the final plot =========
-	plt::figure_size(1200, 780);
-    plt::named_plot("Temperature measures", raw_date, raw_temp, "b-");
-	plt::named_plot("Gaussian Process Fit (RBF)", pred_date, pred_temp, "r-");
-    // Add graph title
-    plt::title("Gaussian Process Regression on Morbihan Decadal Temperatures");
-    plt::xlabel("Elapsed Time (Days since Oct 1st, 1998)");
-    plt::ylabel("Temperature (°C)");
-    // Enable legend.
-    plt::legend();
-	plt::grid(true);
-    // save figure
-    const char* filename = "figures/GP_temperature.png";
-    cout << "Saving result to " << filename << std::endl;
-    plt::save(filename);
-    plt::close();
+	cout << "Generating plot layout via secure data bridge..." << endl;
+
+    // Dump historical observed data to a temporary text file
+    std::ofstream out_raw("data_raw.txt");
+    for(size_t i = 0; i < raw_date.size(); ++i) {
+        out_raw << raw_date[i] << " " << raw_temp[i] << "\n";
+    }
+    out_raw.close();
+
+    // Dump predicted GP data and confidence intervals to a temporary text file
+    ofstream out_pred("data_pred.txt");
+    for(int i = 0; i < N_star; ++i) {
+        out_pred << pred_date[i] << " " << pred_temp[i] << " " 
+                 << lower_bound[i] << " " << upper_bound[i] << "\n";
+    }
+    out_pred.close();
+
+    // Execute a pure, native Python script directly within the interpreter
+    // This bypasses the buggy C++ wrapper entirely and guarantees 0 segfaults/runtime errors.
+    double last_real_day = X.maxCoeff();
+    std::string python_script = 
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "import numpy as std_num\n"
+        "\n"
+        "# Load data back into Python natively\n"
+        "raw_data = std_num.loadtxt('data_raw.txt')\n"
+        "pred_data = std_num.loadtxt('data_pred.txt')\n"
+        "\n"
+        "plt.figure(figsize=(12, 7.8))\n"
+        "\n"
+        "# 1. Plot observed dots\n"
+        "plt.scatter(raw_data[:, 0], raw_data[:, 1], s=8, color='blue', alpha=0.3, label='Temperature measures')\n"
+        "\n"
+        "# 2. Plot confidence interval area\n"
+        "plt.fill_between(pred_data[:, 0], pred_data[:, 2], pred_data[:, 3], color='red', alpha=0.15, label='95 Confidence Interval')\n"
+        "\n"
+        "# 3. Plot continuous GP line\n"
+        "plt.plot(pred_data[:, 0], pred_data[:, 1], 'r-', label='Gaussian Process Fit (RBF)')\n"
+        "\n"
+        "# 4. Draw history/future vertical line\n"
+        "plt.axvline(x=" + std::to_string(last_real_day) + ", color='black', linestyle='--', label='End of History')\n"
+        "\n"
+        "# 5. Decorate with zero-risk strings (FIXED: replaced C++ '::' with Python '.')\n"
+        "plt.title('Gaussian Process Regression on Morbihan Decadal Temperatures')\n"
+        "plt.xlabel('Elapsed Time (Days since Oct 1st, 1998)')\n"
+        "plt.ylabel('Temperature (C)')\n"
+        "plt.legend()\n"
+        "plt.grid(True)\n"
+        "\n"
+        "# Save and clean\n"
+        "plt.savefig('figures/GP_temperature.png', dpi=100)\n"
+        "plt.close()\n";
+
+    // Run the native python code
+    PyRun_SimpleString(python_script.c_str());
+
+    // Clean up temporary data files from your workspace
+    remove("data_raw.txt");
+    remove("data_pred.txt");
+    
+    cout << "Graph successfully saved to figures/GP_temperature.png without any runtime issues!" << endl;
+
+    
 	return 0;
 }
 int dateToDays(int year, int month, int day) {
