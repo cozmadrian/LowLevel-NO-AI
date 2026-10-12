@@ -3,7 +3,10 @@
 #include <string>
 #include <sstream>
 #include <fstream>
+
 #include "matplotlibcpp.h"
+#include "mkl.h"
+
 using namespace std;
 namespace plt = matplotlibcpp;
 
@@ -15,19 +18,29 @@ vector<double> getAvgTemp(const vector<vector<string>>& data);
 
 
 int main(){
+	
+	// Check MKL version details
+    MKLVersion version;
+    mkl_get_version(&version);
+    std::cout << "Running MKL Version: " << version.MajorVersion << "." << version.MinorVersion << std::endl;
+    
+	// reading the data from the csv
 	auto data = readCSV(CSVfname);
 	cout<<"csv data loaded successfully"<<endl;
 	
+	// creating the data arrays with the observations
 	auto date = getDate(data);
 	auto temp = getAvgTemp(data);
-	cout << "date and Temperature loades successfully"<<endl;
+	cout << "date and Temperature loads successfully"<<endl;
 	cout <<" Temperature vector size = "<<  temp.size()<<endl;
 	cout<<"date		"<<"Temp		"<<endl;
 	
+	// simple printing
 	for(long unsigned int i(0); i<temp.size(); ++i){
 		cout<<date[i]<<"	    "<<temp[i]<<endl;
 	}
 	
+	// ======== generating the final plot =========
 	plt::figure_size(1200, 780);
     plt::named_plot("Temperature measures", date, temp, "b-");
 
@@ -36,7 +49,7 @@ int main(){
 
     // Enable legend.
     plt::legend();
-
+	plt::grid(true);
     // save figure
     const char* filename = "figures/GP_temperature.png";
     cout << "Saving result to " << filename << std::endl;;
