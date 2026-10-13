@@ -20,21 +20,49 @@ vector<vector<string>> readCSV(const string& filename);
 vector<int> getDate(const vector<vector<string>>& data);
 vector<double> getAvgTemp(const vector<vector<string>>& data);
 
-double rbf_kernel(double x1, double x2, double t1, double t2, double l)
+double rbf_kernel(double x1, double x2, double t1, double l_decay)
 {
 	double dist = x1 - x2;
-	return t1 * exp(-1.0*(dist * dist)/(2 * l * l)) + t2;
+	return t1 * exp(-1.0*(dist * dist)/(2 * l_decay * l_decay));
+}
+double matern_5_2_kernel(double x1, double x2, double t_short, double l_short)
+{	
+	double dist = abs(x1 - x2);
+	double r = dist / l_short; 
+	double r_2 = r * r;
+	double sq_5 = sqrt(5.0);
+	
+	return t_short * (1 + sq_5 * r + 5.0 / 3.0 * r_2 ) * exp(-1.0 * sq_5 * r);
+	//return 1 ;
 }
 
-Eigen::VectorXd k_vec(Eigen::VectorXd& X, double new_x, double t1, double t2, double l)
+double periodic_kernel(double x1, double x2, double t1, double l, double period = 365.25)
+{
+    double dist = abs(x1 - x2);
+    double sine_component = sin(M_PI * dist / period);
+    
+    return t1 * std::exp(-2.0 * (sine_component * sine_component) / (l * l));
+}
+
+Eigen::VectorXd k_vec(Eigen::VectorXd& X, double new_x, 
+                      double t_per, double l_per, double l_decay, 
+                      double t_short, double l_short, double t2)
 {
 	int N = X.size();
 	Eigen::VectorXd k(N);
 	for(int i = 0; i < N; ++i) {
-		k(i) = rbf_kernel(new_x, X(i), t1, t2, l);
+		// Seasonality
+		double k_seasonal = periodic_kernel(new_x, X(i), t_per, l_per, 365.25) * 
+		                    rbf_kernel(new_x, X(i), 1.0, l_decay);
+		
+		// MLocal meteo
+		double k_weather = matern_5_2_kernel(new_x, X(i), t_short, l_short);
+		
+		k(i) = k_seasonal + k_weather + t2;
 	}
 	return k;
 }
+
 int main(){
 	
 	// Necessary to deal with the python core in cpp
@@ -65,17 +93,24 @@ int main(){
     // as for now we only have our data vectors and observations 
     
     // let's define the hyperperameters which are not optimized for now
-    double t1 = 10;
-    double t2 = 1;
-    double l = 7;
-    double sigma_n = 1;
+	double t_per    = 13.5;      // anual amplitudes
+    double l_per    = 1.3;      // close to 1 aproximatively a sine fct
+    double l_decay  = 20000.0;   // lifetime of the motif
+    
+    double t_short  = 4.5;      // daily amplitude
+    double l_short  = 6.0;      // short time perturbations
+    
+    double t2       = 0.5;      // uncertainty on the global mean
+    double sigma_n  = 1.5;      // white noise to avoid over fitting
     
     // Construction of the covariance matrix K(X, X)
     cout << "constructing the covariance matrix K (" << N << "x" << N << ")..." << endl;
     Eigen::MatrixXd K(N, N);
     for(int i = 0; i < N; ++i) {
         for(int j = 0; j < N; ++j) {
-            K(i, j) = rbf_kernel(X(i), X(j), t1, t2, l);
+            K(i, j) = rbf_kernel(X(i), X(j), 1.0, l_decay) * 
+					  periodic_kernel(X(i), X(j), t_per, l_per) + t2 +
+					  matern_5_2_kernel(X(i), X(j), t_short, l_short);
             if (i == j) {
                 K(i, j) += sigma_n * sigma_n; // noise on the diagonal
             }
@@ -88,7 +123,7 @@ int main(){
 
     // defining the k vectors for a new observation 
     int N_star = 1008;
-    double days_in_future = 3.0 * 365.25;
+    double days_in_future = 10.0 * 365.25;
     
     double start_time = X.minCoeff();                  // First day (1998)
     double end_time_future = X.maxCoeff() + days_in_future; // Last day + 3 years
@@ -104,7 +139,7 @@ int main(){
     cout << "Predicting temperatures across the timeline..." << endl;
     for(int i = 0; i < N_star; ++i) {
         double current_x = X_star(i);
-        Eigen::VectorXd k = k_vec(X, current_x, t1, t2, l);
+        Eigen::VectorXd k = k_vec(X, current_x, t_per, l_per, l_decay, t_short, l_short, t2);
         
         // Formule: f_mean = k^T * K^-1 * Y = k.dot(alpha)
         double pred_centered = k.dot(alpha);
@@ -112,7 +147,9 @@ int main(){
         pred_date[i] = current_x;
         pred_temp[i] = pred_centered + mean_temp; // Restore original scale
         
-        double k_ss = rbf_kernel(current_x, current_x, t1, t1, l);
+        double k_ss = rbf_kernel(current_x, current_x, 1.0 , l_decay) * 
+					  periodic_kernel(current_x, current_x, t_per, l_per) + t2 +
+					  matern_5_2_kernel(current_x, current_x, t_short, l_short);
         Eigen::VectorXd v = llt.solve(k); // Using MKL Cholesky to compute K^-1 * k
         double variance = k_ss - k.dot(v);
         
@@ -178,7 +215,7 @@ int main(){
         "plt.grid(True)\n"
         "\n"
         "# Save and clean\n"
-        "plt.savefig('figures/GP_temperature.png', dpi=100)\n"
+        "plt.savefig('figures/GP_temperature_rbf_matern_periodic_kernel.png', dpi=300)\n"
         "plt.close()\n";
 
     // Run the native python code

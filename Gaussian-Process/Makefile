@@ -8,7 +8,7 @@ MKL_LIBS = -L/opt/intel/oneapi/mkl/latest/lib/intel64 \
            -L/opt/intel/oneapi/compiler/latest/lib \
            -Wl,-rpath,/opt/intel/oneapi/mkl/latest/lib/intel64 \
            -Wl,-rpath,/opt/intel/oneapi/compiler/latest/lib \
-           -lmkl_rt -fopenmp -lpthread -lm -ldl
+           -lmkl_rt -liomp5 -lpthread -lm -ldl
 
 # 2. For python, numpy, and Eigen3
 PYTHON_INC  = $(shell python3.14-config --cflags --embed)
